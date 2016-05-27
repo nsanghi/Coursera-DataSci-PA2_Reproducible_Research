@@ -1,0 +1,213 @@
+---
+title: "PA2_Storm"
+author: "Nimish Sanghi"
+date: "27 May 2016"
+output: 
+  html_document:
+    keep_md: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Exploration on the impact of severe storms in United States on population health and other economic impacts using NOAA Storm Database.
+
+## Reproducible Research PA2
+
+### 1. Synopsis
+
+U.S. National Oceanic and Atmospheric Administration(NOAA) maintains a storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage. 
+
+In this analysis we will plot injuries and fatalities by major event to explore the types of events which cause maximum human damage. 
+
+We will do a second plot of crop and property losses in monetary terms by major events. This plot will help us answer the question as to which types of events cause maximum commerical damage. 
+
+The two grpahs will show that while maximum human loss is caused by tornados, eclipsing by far human damage caused by any other event, maximum commerical loss is caused by Floods and Strong Winds. 
+
+It also shows that there is no correlation bewteen events causing maximum human damage and commerial loss. 
+
+### 2. Data Processing
+
+##### 2.1. Loading required libraries
+```{r, warning=FALSE, message=FALSE}
+library(dplyr) # for grouping and aggregation
+library(ggplot2) # plotting library
+library(reshape2) # to reshape the data
+```
+
+##### 2.2. Loading the data
+```{r, cache=TRUE}
+# download file if it is not present
+if(!file.exists("./repdata-data-StormData.csv.bz2")) {
+    fileUrl <- "https://d396qusza40orc.cloudfront.net/repdata-data-StormData.csv.bz2"
+    binData <- getBinaryURL(fileUrl, ssl.verifypeer=0L, followlocation=1L)
+    destFileHandle <- file(destPath, open="wb")
+    writeBin(binData,destFileHandle)
+    close(destFileHandle)
+}
+# load the zipped file
+stormData <- read.csv("repdata-data-StormData.csv.bz2")
+```
+
+##### 2.3. Keeping columns required for analysis
+
+For the current analysis we need data for event types, date/time when it happened, count of fatalities and injuries, economics damage data e.g. property and crop damage information
+
+```{r, cache=TRUE}
+dataset <- stormData %>%
+                      select(BGN_DATE, EVTYPE, FATALITIES, INJURIES,
+                             PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)
+```
+
+#### 2.4. Reformat Event Type
+
+We now reformat the Event Type to a reduced set. And we also remove rows which are summary
+or for which event type does not match the list of 11 patterns. We also format BGN_DATE as date; EVSOURCE as factor
+
+```{r cahce=TRUE}
+# clubbing events into boraders types
+dataset$EVSOURCE <- NA
+dataset$EVTYPE <- as.character(dataset$EVTYPE)
+dataset$EVSOURCE[grepl("thunderstorm|lightning|funnel cloud", dataset$EVTYPE,ignore.case = TRUE)] <- "thunderstorm and lightning"
+dataset$EVSOURCE[grepl("dust", dataset$EVTYPE,ignore.case = TRUE)]  <- "duststorm"
+dataset$EVSOURCE[grepl("flood|FLD", dataset$EVTYPE,ignore.case = TRUE)] <- "flood"
+dataset$EVSOURCE[grepl("slide|erosion", dataset$EVTYPE,ignore.case = TRUE)] <- "lanslide"
+dataset$EVSOURCE[grepl("heavy rain|hail|precipitation|burst|rain", dataset$EVTYPE,ignore.case = TRUE)] <- "heavy Rains"
+dataset$EVSOURCE[grepl("freez|cold|snow|chill|avalanche|winter|blizzard|wintry|fog", dataset$EVTYPE,ignore.case = TRUE)] <- "cold weather"
+dataset$EVSOURCE[grepl("tstm|wind|storm|hurricane|typhoon", dataset$EVTYPE,ignore.case = TRUE)] <- "strong winds"
+dataset$EVSOURCE[grepl("fire|smoke", dataset$EVTYPE,ignore.case = TRUE)] <- "fire"
+dataset$EVSOURCE[grepl("heat|hot|drought|temperature record|record temperature|record high|dry|record_warmth|warm", dataset$EVTYPE,ignore.case = TRUE)] <- "hot weather"
+dataset$EVSOURCE[grepl("tornado", dataset$EVTYPE,ignore.case = TRUE)] <- "tornado"
+dataset$EVSOURCE[grepl("waterspout|tsunami|marine|current|tide|surf", dataset$EVTYPE,ignore.case = TRUE)] <- "tsumani and water"
+
+# dropping data which could not be categorised
+dataset <- dataset[!is.na(dataset$EVSOURCE),]
+
+# remove EVTYPE column
+dataset$EVTYPE <- NULL
+
+# make EVSOURCE as factor
+dataset$EVSOURCE <- as.factor(dataset$EVSOURCE)
+
+#make BGN_DATE as a Date type
+dataset$BGN_DATE <- as.Date(dataset$BGN_DATE, "%m/%d/%Y")
+
+#remove rows which do not have a proper date
+dataset <- dataset[!is.na(dataset$BGN_DATE),]
+
+
+#extract year 
+dataset$year <- as.numeric(substr(as.character(dataset$BGN_DATE),1,4))
+
+```
+
+#### 2.5. Format damage amounts
+
+We now PROPDMG and PROPDMGEXP to a single number amount. Same process is performed for CROPDMG and CROPDMGEXP.
+
+```{r, cache=TRUE}
+
+# formatting PROPDMGEXP
+dataset$PROPDMGEXP <- as.character(dataset$PROPDMGEXP)
+dataset$PROPDMGEXP[dataset$PROPDMGEXP=="-" | 
+                     dataset$PROPDMGEXP=="?" | 
+                     dataset$PROPDMGEXP=="+" |
+                     dataset$PROPDMGEXP=="" |
+                     dataset$PROPDMGEXP==" "] <- 0
+
+dataset$PROPDMGEXP[dataset$PROPDMGEXP=="B"] <- 9
+
+dataset$PROPDMGEXP[dataset$PROPDMGEXP=="h" | 
+                     dataset$PROPDMGEXP=="H" |
+                     dataset$PROPDMGEXP=="k" |
+                     dataset$PROPDMGEXP=="K" ] <- 3
+
+dataset$PROPDMGEXP[dataset$PROPDMGEXP=="m" | 
+                     dataset$PROPDMGEXP=="M" ] <- 6
+
+dataset$PROPDMGEXP <- as.numeric(dataset$PROPDMGEXP)
+
+# formatting CROPDMGEXP
+dataset$CROPDMGEXP <- as.character(dataset$CROPDMGEXP)
+dataset$CROPDMGEXP[dataset$CROPDMGEXP=="-" | 
+                     dataset$CROPDMGEXP=="?" | 
+                     dataset$CROPDMGEXP=="+" |
+                     dataset$CROPDMGEXP=="" |
+                     dataset$CROPDMGEXP==" "] <- 0
+
+dataset$CROPDMGEXP[dataset$CROPDMGEXP=="B"] <- 9
+
+dataset$CROPDMGEXP[dataset$CROPDMGEXP=="h" | 
+                     dataset$CROPDMGEXP=="H" |
+                     dataset$CROPDMGEXP=="k" |
+                     dataset$CROPDMGEXP=="K" ] <- 3
+
+dataset$CROPDMGEXP[dataset$CROPDMGEXP=="m" | 
+                     dataset$CROPDMGEXP=="M" ] <- 6
+
+dataset$CROPDMGEXP <- as.numeric(dataset$CROPDMGEXP)
+
+#combine the numeric and exponent into a sigle value - one for each of CROPDMG and PROPDMG
+dataset<- mutate(dataset, CROPTOTAL = CROPDMG*10^CROPDMGEXP, PROPTOTAL = PROPDMG*10^PROPDMGEXP)
+
+
+#remove individual damage fields with value broken into number and exponent
+dataset$PROPDMG <- NULL
+dataset$PROPDMGEXP <- NULL
+dataset$CROPDMG <- NULL
+dataset$CROPDMGEXP <- NULL
+```
+
+
+### 3. Results
+
+#### 3.1. Preparing data for analysis
+
+We now prepare two seprate datasets to address the two questions i.e. 
+a) Which types of events are most harmful with respect to population health?
+b) Which types of events have the greatest economic consequences?
+
+
+```{r, cache=TRUE}
+
+# melt dataset
+human.loss <- melt(dataset, id=c("EVSOURCE"), measure.vars=c("FATALITIES","INJURIES"))
+commercial.loss <- melt(dataset, id=c("EVSOURCE"), measure.vars=c("PROPTOTAL","CROPTOTAL"))
+
+#aggergate data to sum by the type of event source
+human.loss <- human.loss %>% 
+              group_by(EVSOURCE, variable) %>% 
+              summarise(value = sum(value))
+
+commercial.loss <-commercial.loss %>% 
+                  group_by(EVSOURCE, variable) %>% 
+                  summarise(value = sum(value))
+
+```
+
+
+#### 3.2. Exploring human loss
+
+We now plot human loss as a stacked graph 
+
+```{r, cache=TRUE}
+ggplot(data=human.loss, aes(EVSOURCE,value, fill =variable)) + 
+     geom_bar(stat="identity")+xlab("Event type") + 
+     ylab("Total Human fatalities & Injuries ") + 
+     ggtitle("Human injuries & fatalities caused by most harmful group events") +  
+     theme(axis.text.x = element_text(angle = 45, size=10, hjust = 1))
+```
+
+#### 3.3. Exploring commercial loss
+
+We now plot commerical loss as a stacked graph
+```{r, cache=TRUE}
+ggplot(data=commercial.loss, aes(EVSOURCE,value, fill =variable)) + 
+     geom_bar(stat="identity")+xlab("Event type") + 
+     ylab("Total Commerical Loss ") + 
+     ggtitle("Property and Crop losses caused by most harmful group events") +  
+     theme(axis.text.x = element_text(angle = 45, size=10, hjust = 1))
+```
+
